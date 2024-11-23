@@ -1,4 +1,4 @@
-setwd("C:/Users/jakob/OneDrive - Linköpings universitet/Uni/Semester_1/ML/Labs/")
+#setwd()
 
 #### 1 ####
 
@@ -6,11 +6,11 @@ data <- read.csv("optdigits.csv", header = FALSE)
 
 n <- dim(data)[1]
 set.seed(12345)
-id <- sample(1:n, floor(n*0.4))
+id <- sample(1:n, floor(n*0.5))
 train <- data[id,]
 id1 <- setdiff(1:n, id)
 set.seed(12345)
-id2 <- sample(id1, floor(n*0.3))
+id2 <- sample(id1, floor(n*0.25))
 valid <- data[id2,]
 id3 <- setdiff(id1,id2)
 test <- data[id3,]
@@ -134,17 +134,23 @@ ggplot(df_errors, aes(x = K)) +
 # for the model having the optimal K, compare it with the training and validation
 # errors and make necessary conclusions about the model quality.
 
-
+best_model <- kknn(as.factor(V65)~., train = train, test = test, k=3, kernel="rectangular")
+best_predictions <- fitted(best_model)
+best_conf_matrix <- table(predicted_values=best_predictions, true_values=test$V65)
+best_error <- missclassification_error(best_conf_matrix)
+best_error
 
 #### 5 ####
 
-cross_entropy_error <- function(y_true, y_hat){
-  loss <- -sum(y_true * log(y_hat + 1e-15)) / length(y_hat)
-  return(loss)
+cross_entropy_error <- function(y_true, pred_probs){
+  n <- length(y_true)
+  true_prob <- sapply(1:n, function(i) pred_probs[i, y_true[i] + 1])
+  error <- -sum(log(true_prob + 1e-15)) / n
+  return(error)
 }
 
 
-k_values <- 1:150
+k_values <- 1:30
 train_errors <- numeric(length=length(k_values))
 val_errors <- numeric(length=length(k_values))
 #-sum(y_true * log(y_hat + 1e-15)) / nrow(y)
@@ -154,12 +160,15 @@ for (K in k_values){
 
   train_probs <- train_model$prob
   train_error <- cross_entropy_error(train$V65, train_probs)
+  #train_error <- cross_entropy(train_probs,train$V65)
   train_errors[K] <- train_error
   
   val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
   
   val_probs <- val_model$prob
   val_error <- cross_entropy_error(valid$V65, val_probs)
+  #val_error <- cross_entropy(val_probs,valid$V65)
+  
   val_errors[K] <- val_error
 }
 val_errors
@@ -171,13 +180,9 @@ ggplot(df_errors, aes(x = K)) +
   labs(
     title = "Training and Validation Errors vs K",
     x = "Number of Neighbors (K)",
-    y = "Misclassification Error"
+    y = "Cross Validation Error"
   ) +
   scale_color_manual(
     name = "Error Type",
     values = c("Training Error" = "blue", "Validation Error" = "red")
   )
-
-# TODO What is the optimal 𝐾𝐾 value here? Assuming that response has
-#multinomial distribution, why might the cross-entropy be a more suitable choice
-#of the error function than the misclassification error for this problem?

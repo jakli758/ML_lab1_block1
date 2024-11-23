@@ -1,0 +1,450 @@
+---
+output:
+  pdf_document: default
+---
+
+
+
+# Computer lab 1 block 1
+
+## Assignment 1. Handwritten digit recognition with K-nearest neighbors.  
+
+### 1. Import the data  
+```{r}
+data <- read.csv("optdigits.csv", header = FALSE) 
+
+n <- dim(data)[1]
+set.seed(12345)
+id <- sample(1:n, floor(n*0.5))
+train <- data[id,]
+id1 <- setdiff(1:n, id)
+set.seed(12345)
+id2 <- sample(id1, floor(n*0.25))
+valid <- data[id2,]
+id3 <- setdiff(id1,id2)
+test <- data[id3,]
+
+```
+
+### 2. Fit 30-nearest neighbor classifier
+
+Two predictions are made based on the train data. One for the train data and one for the test data. The misclassification error is computed on the basis of the confusion matrices using the fact that the diagonal of these matrices are the correctly predicted values.
+
+```{r echo=FALSE}
+library(kknn)
+```
+
+
+```{r}
+model_train <- kknn(as.factor(V65)~., train = train, test = train, k=30, kernel="rectangular")
+train_predictions <- fitted(model_train)
+
+model_test <- kknn(as.factor(V65)~., train = train, test = test, k=30, kernel="rectangular")
+test_predictions <- fitted(model_test)
+
+# confusion matrices
+conf_matrix_train <- table(predicted_values=train_predictions, true_values=train$V65)
+conf_matrix_test <- table(predicted_values=test_predictions, true_values=test$V65)
+
+
+
+# misclassification error
+misclassification_error <- function(confusion_matrix){
+  # return 1 - (sum of correct classifications / total classifications) 
+  return(1-sum(diag(confusion_matrix)) / sum(confusion_matrix))
+}
+misclassification_error_train <- misclassification_error(conf_matrix_train)
+misclassification_error_test <- misclassification_error(conf_matrix_test)
+
+
+```
+
+```{r echo=FALSE}
+library(kknn)
+cat("Train data predictions: \n")
+conf_matrix_train
+cat("Test data predictions: \n")
+conf_matrix_test
+cat("misclassification Error on train data:", misclassification_error_train, "\n")
+cat("misclassification Error on test data:", misclassification_error_test, "\n")
+```
+
+#### Comment on prediction quality:
+The overall prediction quality is very good for both datasets. They have similarly low misclassification errors, the error on the train data is a bit smaller (around 0.007).  
+
+For some digits the classifier does barely make any mistake. E.g. "0" is correctly classified for all appearances in the train data, only one mistake is made on the train data. For "6" there is no wrong classification in the test data, while two misclassifications appear on the train data.  
+
+But some digits are harder to predict. E.g. "8" is misclassfied 16 times on the train data and 8 times on the test data. The model fails to distinguish it from the digit "1" quiet often with 10 and 7 wrong classifications respectively. "4" is harder to predict as well, with 16 wrong predictions on the train data and 15 on the test data. It is often mixes up with "7", 7 and 6 misclassifications, or "9", 4 and 5 misclassifications.
+
+###  3. Investigation of digit "8"
+
+A function is written to display a digit. It uses a helper function to rotate the images, found here: https://stackoverflow.com/questions/16496210/rotate-a-matrix-in-r-by-90-degrees-clockwise  
+
+To find the easiest and hardest predictions a column added to the data frame. It contains the probability for the correct class. A filtered dataset that only contains obeservations with class of "8" can be filtered and then sorted by the probability. Another column with the predicted class helps to see which digit the true class was confused with.
+
+```{r}
+display_img <- function(df, index){
+  # helper function to rotate the images
+  rotate <- function(x) t(apply(x, 2, rev)) 
+  img <- rotate(rotate(rotate(matrix(unlist(df[index,1:64]), nrow=8,ncol=8)))) 
+  heatmap(img, Colv = NA, Rowv = NA)
+}
+
+# add column with probability for correct class to df
+correct_class_probs <- sapply(1:nrow(train), function(i) {
+  model_train$prob[i, as.character(train$V65[i])]
+})
+train$correct_prob <- correct_class_probs
+
+# add column with predicted class 
+train$predicted_value <- fitted(model_train)
+
+# get indices for class 8 in train set
+i_eight <- which(train$V65 == 8)
+
+# create df with only eights and sort df to get the images with highest/lowest probs
+train_eight <- train[i_eight,]
+train_eight_ordered <- train_eight[order(train_eight$correct_prob),]
+
+
+
+
+```
+
+Displaying the two that were the easiest to classify:
+```{r echo=FALSE}
+# visualize two easiest to classify
+display_img(data, 981)
+display_img(data, 3447)
+
+```
+  
+They both have the probability 1, but from a human perspective the second one seems a bit harder to classify, because of the mising hole in the lower circle of the "8".
+
+
+Displaying the three that were the hardest to classify:  
+```{r echo=FALSE}
+# visualize three hardest to classify
+display_img(data, 1793)
+display_img(data, 869)
+display_img(data, 3591)
+
+```  
+  
+The first one, with a probability of 0.1 for "8", is misclassified as "1", which is reasonable, because it is more or less just a thin straight line.  
+The second one is also predicted as "1", with a probability of 0.133 for "8". It is also a thin straight line, but this time there is a hole in lower part, so one could maybe guess that it is an "8".
+The third one, with a probability of 0.167 for "8", is misclassified as "6". At first glance it does not look like any digit, but with some fantasy an "8" that is roatated a bit could be seen. 
+
+
+### 4. Finding optimal K using misclassification error 
+
+```{r echo=FALSE}
+# reset the datasplits, as lines have been added previously
+data <- read.csv("optdigits.csv", header = FALSE) 
+
+n <- dim(data)[1]
+set.seed(12345)
+id <- sample(1:n, floor(n*0.5))
+train <- data[id,]
+id1 <- setdiff(1:n, id)
+set.seed(12345)
+id2 <- sample(id1, floor(n*0.25))
+valid <- data[id2,]
+id3 <- setdiff(id1,id2)
+test <- data[id3,]
+
+```
+
+To find the optimal K, the misclassification error for models with K from 1 to 30 is calculated and plotted, for both train and validation data.
+
+```{r}
+k_values <- 1:30
+train_errors <- numeric(length=length(k_values))
+val_errors <- numeric(length=length(k_values))
+
+for (K in k_values){
+  train_model <- kknn(as.factor(V65)~., train = train, test = train, k=K, kernel="rectangular")
+  
+  train_predictions <- fitted(train_model)
+  train_conf_matrix <- table(predicted_values=train_predictions, true_values=train$V65)
+  train_error <- misclassification_error(train_conf_matrix)
+  train_errors[K] <- train_error
+  
+  val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
+  
+  val_predictions <- fitted(val_model)
+  val_conf_matrix <- table(predicted_values=val_predictions, true_values=valid$V65)
+  val_error <- misclassification_error(val_conf_matrix)
+  val_errors[K] <- val_error
+}
+
+df_errors <- data.frame(K = k_values, train_error = train_errors, val_error=val_errors)
+```
+
+```{r echo=FALSE}
+library(ggplot2)
+ggplot(df_errors, aes(x = K)) +
+  geom_line(aes(y = train_error, color = "Training Error")) +
+  geom_line(aes(y = val_error, color = "Validation Error")) +
+  labs(
+    title = "Training and Validation Errors vs K",
+    x = "Number of Neighbors (K)",
+    y = "Misclassification Error"
+  ) +
+  scale_color_manual(
+    name = "Error Type",
+    values = c("Training Error" = "blue", "Validation Error" = "red")
+  )
+```
+The model complexity does not increase with higher K, as it is a non-parametric model. It would only change with different size of training data. With higher K more irrelevant neigbours are considered as well, therefore the error gets bigger at some point.  
+The training error starts at 0 for K=1 and K=2 but then gets bigger for higher Ks, with some minor decreases for some K.
+The validation error is the lowest for K=3 and K=4 (both 0.02722513) and increases until K=25, where it begins to decrease for a few Ks.
+Therefore, the optimal K would be 3 or 4, according to this plot.
+
+```{r}
+best_model <- kknn(as.factor(V65)~., train = train, test = test, k=3, kernel="rectangular")
+best_predictions <- fitted(best_model)
+best_conf_matrix <- table(predicted_values=best_predictions, true_values=test$V65)
+best_error <- misclassification_error(best_conf_matrix)
+best_error
+```
+
+According to this metric, the model has a good quality, as it has a very low test error.
+
+### 5. Finding optimal K using cross entropy error 
+
+The routine is the same as in assignment 4, except the cross entropy error is calculated instead of the misclassification error.
+
+To compute the cross entropy error, the probabilities for the correct class must be extracted from the predicted class probabilities. 
+
+```{r}
+cross_entropy_error <- function(y_true, pred_probs){
+  n <- length(y_true)
+  true_prob <- sapply(1:n, function(i) pred_probs[i, y_true[i] + 1])
+  error <- -sum(log(true_prob + 1e-15)) / n
+  return(error)
+}
+```
+```{r echo=FALSE}
+k_values <- 1:30
+train_errors <- numeric(length=length(k_values))
+val_errors <- numeric(length=length(k_values))
+
+for (K in k_values){
+  train_model <- kknn(as.factor(V65)~., train = train, test = train, k=K, kernel="rectangular")
+
+  train_probs <- train_model$prob
+  train_error <- cross_entropy_error(train$V65, train_probs)
+  train_errors[K] <- train_error
+  
+  val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
+  
+  val_probs <- val_model$prob
+  val_error <- cross_entropy_error(valid$V65, val_probs)
+  
+  val_errors[K] <- val_error
+}
+
+df_errors <- data.frame(K = k_values, train_error = train_errors, val_error=val_errors)
+
+ggplot(df_errors, aes(x = K)) +
+  geom_line(aes(y = train_error, color = "Training Error")) +
+  geom_line(aes(y = val_error, color = "Validation Error")) +
+  labs(
+    title = "Training and Validation Errors vs K",
+    x = "Number of Neighbors (K)",
+    y = "Cross Validation Error"
+  ) +
+  scale_color_manual(
+    name = "Error Type",
+    values = c("Training Error" = "blue", "Validation Error" = "red")
+  )
+``` 
+
+The smallest validation error results for K=6.  
+In the case of multinominal distributions the cross entropy might be the better metric, as it takes the class probabilities into consideration and therefore the confidence of the model can be optimized.
+
+
+# Apendix
+```{r eval=FALSE}
+#setwd()
+
+#### 1 ####
+
+data <- read.csv("optdigits.csv", header = FALSE)
+
+n <- dim(data)[1]
+set.seed(12345)
+id <- sample(1:n, floor(n*0.5))
+train <- data[id,]
+id1 <- setdiff(1:n, id)
+set.seed(12345)
+id2 <- sample(id1, floor(n*0.25))
+valid <- data[id2,]
+id3 <- setdiff(id1,id2)
+test <- data[id3,]
+
+train
+#### 2 ####
+library(kknn)
+# model that is trained on train dataset and predicts on train dataset
+model_train <- kknn(as.factor(V65)~., train = train, test = train, k=30, kernel="rectangular")
+train_predictions <- fitted(model_train)
+
+# model that is trained on train dataset and predicts on train dataset
+model_test <- kknn(as.factor(V65)~., train = train, test = test, k=30, kernel="rectangular")
+test_predictions <- fitted(model_test)
+
+# confusion matrices
+conf_matrix_train <- table(predicted_values=train_predictions, true_values=train$V65)
+cat("Train data predictions: \n")
+conf_matrix_train
+
+conf_matrix_test <- table(predicted_values=test_predictions, true_values=test$V65)
+cat("Test data predictions: \n")
+conf_matrix_test
+
+
+# missclassification error
+missclassification_error <- function(confusion_matrix){
+  return(1-sum(diag(confusion_matrix)) / sum(confusion_matrix))
+}
+missclassification_error_train <- missclassification_error(conf_matrix_train)
+missclassification_error_test <- missclassification_error(conf_matrix_test)
+
+cat("Missclassification Error on train data:", missclassification_error_train, "\n")
+cat("Missclassification Error on test data:", missclassification_error_test, "\n")
+
+
+
+#### 3 ####
+display_img <- function(df, index){
+  # helper function to rotate the images
+  rotate <- function(x) t(apply(x, 2, rev)) # https://stackoverflow.com/questions/16496210/rotate-a-matrix-in-r-by-90-degrees-clockwise
+  img <- rotate(rotate(rotate(matrix(unlist(df[index,1:64]), nrow=8,ncol=8)))) # use unlist to avoid "'x' must be numeric matrix error"
+  heatmap(img, Colv = NA, Rowv = NA)
+}
+
+display_img(train, 1511)
+
+# add column with probability for correct class to df
+correct_class_probs <- sapply(1:nrow(train), function(i) {
+  model_train$prob[i, as.character(train$V65[i])]
+})
+train$correct_prob <- correct_class_probs
+
+# add column with predicted class 
+train$predicted_value <- fitted(model_train)
+
+# get indices for class 8 in train set
+i_eight <- which(train$V65 == 8)
+
+# create df with only eights and sort df to get the images with highest/lowest probs
+train_eight <- train[i_eight,]
+train_eight_ordered <- train_eight[order(train_eight$correct_prob),]
+
+# visualize two easiest to classify
+tail(train_eight_ordered,2)
+display_img(data, 981)
+display_img(data, 3447)
+
+# visualize three hardest to classify
+head(train_eight_ordered,3)
+display_img(data, 1793)
+display_img(data, 869)
+display_img(data, 3591)
+
+
+
+#### 4 ####
+
+k_values <- 1:30
+train_errors <- numeric(length=length(k_values))
+val_errors <- numeric(length=length(k_values))
+
+for (K in k_values){
+  train_model <- kknn(as.factor(V65)~., train = train, test = train, k=K, kernel="rectangular")
+  
+  train_predictions <- fitted(train_model)
+  train_conf_matrix <- table(predicted_values=train_predictions, true_values=train$V65)
+  train_error <- missclassification_error(train_conf_matrix)
+  train_errors[K] <- train_error
+  
+  val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
+  
+  val_predictions <- fitted(val_model)
+  val_conf_matrix <- table(predicted_values=val_predictions, true_values=valid$V65)
+  val_error <- missclassification_error(val_conf_matrix)
+  val_errors[K] <- val_error
+}
+train_errors
+train_conf_matrix
+val_errors
+df_errors <- data.frame(K = k_values, train_error = train_errors, val_error=val_errors)
+
+library(ggplot2)
+ggplot(df_errors, aes(x = K)) +
+  geom_line(aes(y = train_error, color = "Training Error")) +
+  geom_line(aes(y = val_error, color = "Validation Error")) +
+  labs(
+    title = "Training and Validation Errors vs K",
+    x = "Number of Neighbors (K)",
+    y = "Misclassification Error"
+  ) +
+  scale_color_manual(
+    name = "Error Type",
+    values = c("Training Error" = "blue", "Validation Error" = "red")
+  )
+
+
+best_model <- kknn(as.factor(V65)~., train = train, test = test, k=3, kernel="rectangular")
+best_predictions <- fitted(best_model)
+best_conf_matrix <- table(predicted_values=best_predictions, true_values=test$V65)
+best_error <- missclassification_error(best_conf_matrix)
+best_error
+
+#### 5 ####
+
+cross_entropy_error <- function(y_true, pred_probs){
+  n <- length(y_true)
+  true_prob <- sapply(1:n, function(i) pred_probs[i, y_true[i] + 1])
+  error <- -sum(log(true_prob + 1e-15)) / n
+  return(error)
+}
+
+
+k_values <- 1:30
+train_errors <- numeric(length=length(k_values))
+val_errors <- numeric(length=length(k_values))
+
+for (K in k_values){
+  train_model <- kknn(as.factor(V65)~., train = train, test = train, k=K, kernel="rectangular")
+
+  train_probs <- train_model$prob
+  train_error <- cross_entropy_error(train$V65, train_probs)
+  train_errors[K] <- train_error
+  
+  val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
+  
+  val_probs <- val_model$prob
+  val_error <- cross_entropy_error(valid$V65, val_probs)
+  
+  val_errors[K] <- val_error
+}
+val_errors
+df_errors <- data.frame(K = k_values, train_error = train_errors, val_error=val_errors)
+
+ggplot(df_errors, aes(x = K)) +
+  geom_line(aes(y = train_error, color = "Training Error")) +
+  geom_line(aes(y = val_error, color = "Validation Error")) +
+  labs(
+    title = "Training and Validation Errors vs K",
+    x = "Number of Neighbors (K)",
+    y = "Cross Validation Error"
+  ) +
+  scale_color_manual(
+    name = "Error Type",
+    values = c("Training Error" = "blue", "Validation Error" = "red")
+  )
+
+```
