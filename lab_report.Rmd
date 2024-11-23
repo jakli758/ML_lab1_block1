@@ -265,6 +265,16 @@ The smallest validation error results for K=6.
 In the case of multinominal distributions the cross entropy might be the better metric, as it takes the class probabilities into consideration and therefore the confidence of the model can be optimized.
 
 
+## Assignment 2. Linear regression and ridge regression
+
+
+
+## Assignment 3. Logistic regression and basis function
+expansion
+
+
+
+
 # Apendix
 ```{r eval=FALSE}
 #setwd()
