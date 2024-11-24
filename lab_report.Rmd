@@ -458,3 +458,446 @@ ggplot(df_errors, aes(x = K)) +
   )
 
 ```
+
+## Assignment 2. Linear regression and ridge regression
+
+### 1. diabetes preparation
+
+```{r}
+parkinsons <- read.csv("parkinsons.csv")
+```
+
+
+We split the diabetes into a training and a test set (60/40) 
+```{r}
+library(caret)
+
+set.seed(123)
+train_index <- creatediabetesPartition(parkinsons$subject, p = 0.6, list = FALSE)
+
+train_set <- parkinsons[train_index, ]
+test_set <- parkinsons[-train_index, ]
+```
+
+The target variable is `motor_UPDRS`, and the column `subject.` is excluded from the predictors but retained for grouping purposes.
+
+```{r}
+# Exclude non-predictor columns
+predictor_columns <- setdiff(names(train_set), c("motor_UPDRS", "subject."))
+
+# Scale the predictors in the training set
+scaled_train <- train_set
+scaled_train[predictor_columns] <- scale(train_set[predictor_columns])
+
+# Save scaling parameters from training set
+scaling_params <- attributes(scale(train_set[predictor_columns]))
+
+# Scale the predictors in the test set using training set parameters
+scaled_test <- test_set
+scaled_test[predictor_columns] <- scale(
+  test_set[predictor_columns],
+  center = scaling_params$`scaled:center`,
+  scale = scaling_params$`scaled:scale`
+)
+
+scaled_train <- scaled_train[, c(predictor_columns, "motor_UPDRS", "subject.")]
+scaled_test <- scaled_test[, c(predictor_columns, "motor_UPDRS", "subject.")]
+```
+
+
+### 2. Linear Regression Model
+
+
+```{r}
+#Regression model on the training diabetes and removing subject from the model
+linear_model <- lm(motor_UPDRS ~ . - subject., diabetes = scaled_train)
+
+
+# Training and test MSE
+train_predictions_train <- predict(linear_model, scaled_train)
+train_mse <- mean((scaled_train$motor_UPDRS - train_predictions_train)^2)
+
+test_predictions_test <- predict(linear_model, scaled_test)
+test_mse <- mean((scaled_test$motor_UPDRS - test_predictions_test)^2)
+
+train_mse
+test_mse
+
+```
+
+
+
+The MSE for the train and test set are close in value, that means the model adapts well to other sets than the training
+
+```{r}
+summary(linear_model)
+```
+
+The variables that contribute significantly are the ones with a p-value <0.05 : age,sex,total_UPDRS, jitter, jitter.Abs,Shimmer.APQ5,Shimmer.APQ11,RPDE,PPE.
+
+### 4. Implementing functions
+
+```{r}
+# Log-likelihood function
+logLikelihood <- function(theta, sigma, X, T) {
+  n <- length(T) # Number of observations
+  residuals <- T - X %*% theta # Calculate residuals
+  - (n / 2) * log(2 * pi) - n * log(sigma) - (1 / (2 * sigma^2)) * sum(residuals^2)
+}
+```
+
+```{r}
+#Ridge function
+ridge <- function(theta, sigma, X, T, lambda) {
+  logLikelihood <- logLikelihood(theta, sigma, X, T)
+  ridge_penalty <- lambda * sum(theta[-1]^2)
+  return(-logLikelihood + ridge_penalty)
+}
+
+```
+
+```{r}
+#RidgeOpt function
+ridgeOpt <- function(lambda, X, T, initial_theta, initial_sigma) {
+  # Define the objective function to minimize
+  objective_function <- function(params) {
+    theta <- params[-length(params)] # Extract theta
+    log_sigma <- params[length(params)] # Optimize log(sigma)
+    sigma <- exp(log_sigma) 
+    
+    ridge(theta, sigma, X, T, lambda)
+  }
+  
+  # Combine initial guesses for theta and log(sigma) into a single vector
+  initial_log_sigma <- log(initial_sigma)
+  initial_params <- c(initial_theta, initial_log_sigma)
+  
+  # Minimize the objective function
+  opt <- optim(
+    par = initial_params,
+    fn = objective_function,
+    method = "BFGS",
+    control = list(fnscale = 1) # Default direction for minimization
+  )
+  
+  # Extract optimized theta and sigma
+  optimized_theta <- opt$par[-length(opt$par)] 
+  optimized_sigma <- exp(opt$par[length(opt$par)]) 
+  
+  
+  return(list(
+    optimized_theta = optimized_theta,
+    optimized_sigma = optimized_sigma,
+    value = opt$value, # Final objective value
+    convergence = opt$convergence # Convergence status
+  ))
+}
+```
+
+```{r}
+#DF function
+#Compute degrees of freedom for Ridge regression
+df <- function(lambda, X) {
+  # Compute the Ridge hat matrix
+  n <- ncol(X) # Number of predictors
+  I <- diag(n) # Identity matrix of size n x n
+  H <- X %*% solve(t(X) %*% X + lambda * I) %*% t(X) # Hat matrix
+  
+  # Return the trace of the hat matrix
+  return(sum(diag(H)))
+}
+```
+
+
+### 4. Computing optimal theta for different lambdas
+
+```{r}
+# Define required variables
+lambdas <- c(1, 100, 1000) # Regularization parameters
+T <- scaled_train$motor_UPDRS # Target variable
+X <- as.matrix(cbind(1, scaled_train[, predictor_columns])) # Design matrix with intercept
+initial_theta <- rep(0, ncol(X)) # Initialize theta as zeros
+initial_sigma <- 1 # Initial guess for sigma
+
+
+# Placeholder for results
+results <- lapply(lambdas, function(lambda) {
+  # Optimize parameters for the current lambda
+  opt_result <- ridgeOpt(lambda, X, T, initial_theta, initial_sigma)
+  
+  # Extract optimized parameters
+  optimized_theta <- opt_result$optimized_theta
+  optimized_sigma <- opt_result$optimized_sigma
+  
+  # Compute predictions
+  train_predictions <- X %*% optimized_theta
+  test_X <- as.matrix(cbind(1, scaled_test[, predictor_columns])) # Test matrix with intercept
+  test_predictions <- test_X %*% optimized_theta
+  
+  # Compute MSE for training and test sets
+  train_mse <- mean((T - train_predictions)^2)
+  test_mse <- mean((scaled_test$motor_UPDRS - test_predictions)^2)
+  
+  # Compute degrees of freedom
+  degrees_of_freedom <- df(lambda, X)
+  
+  # Return results
+  list(
+    lambda = lambda,
+    optimized_theta = optimized_theta,
+    optimized_sigma = optimized_sigma,
+    train_mse = train_mse,
+    test_mse = test_mse,
+    degrees_of_freedom = degrees_of_freedom
+  )
+})
+
+# Results
+for (res in results) {
+  cat("\nLambda:", res$lambda, "\n")
+  cat("Optimized Sigma:", res$optimized_sigma, "\n")
+  cat("Training MSE:", res$train_mse, "\n")
+  cat("Test MSE:", res$test_mse, "\n")
+  cat("Degrees of Freedom:", res$degrees_of_freedom, "\n")
+}
+```
+
+Lambda is the regularization parameter that controls the impact of the ridge penalty. Lambda = 1 is the most appropriate for the ridge regression model because it has the lowest MSE, 6.32 vs 27.80 and 61.78. That means generalization performance to new diabetes is better. The degrees of freedom are the balance between complexity and regularization. A model with low DF may be too simple to explain the target variable with all variables used in the model. High DF may be too complex to fit other diabetes sets than the one used for training. The DF for lambda = 1 are 18.8, so relatively close to the DF of lambda = 100 (14.7). With the MSE and the DF for each lambda we can say that lambda = 1 is the most appropriate in our case.
+
+
+## Assignment 3. Logistic regression and basis function expansion
+
+### diabetes preparation
+
+```{r}
+data_diab <- read.csv("pima-indians-diabetes.csv")
+```
+
+```{r}
+colnames(data_diab) <- c("n_preg","plasma","pressure","thickness","insulin","body_mass","diab_fun","age","diabetes")
+```
+
+### 1. Scatter plot of diabetes level by plasma glucose concentration and age
+
+```{r}
+gradient <- colorRampPalette(c("blue", "red"))
+colors <- gradient(100)  
+
+# Normalize diab_fun to match the color indices
+scaled_diab_fun <- as.numeric(cut(data_diab$diab_fun, breaks = 100))
+
+# Plot with the color gradient
+plot(data_diab$plasma, data_diab$age, main="Plasma glucose concentration on age",
+     xlab="Plasma", ylab="Age", pch=16, col=colors)
+legend("topright", 
+       legend = c("Low diabetes level", "High diabetes level"),
+       col = c("blue", "red"), 
+       pch = 16, 
+       title = "Diabetes Level")
+
+```
+
+It is not easy to classify diabetes using only plasma glucose concentration and age.
+While the scatter plot shows some general trends, such as higher plasma glucose concentrations being associated with diabetes, the overlap between the two classes across the age and plasma glucose dimensions suggests that a simple logistic regression model might struggle to achieve high accuracy.
+This is because the decision boundary between the two groups would not clearly separate the classes, leading to significant misclassification errors. Additional features or transformations are needed to improve classification performance.
+
+
+### 2. Training logic regression model
+
+```{r}
+data_diab$diabetes <- as.factor(data_diab$diabetes)  
+logistic_model <- glm(diabetes ~ plasma + age, data = data_diab, family = binomial)
+
+```
+
+```{r}
+# Make predictions
+predicted_prob <- predict(logistic_model, type = "response")
+
+# Classify based on threshold r = 0.5
+predicted_class <- ifelse(predicted_prob >= 0.5, 1, 0)
+
+# Add predictions to the data for inspection
+data_diab$predicted_prob <- predicted_prob
+data_diab$predicted_class <- predicted_class
+
+# Print the first few rows of the predictions
+head(data_diab[, c("plasma", "age", "diabetes", "predicted_prob", "predicted_class")])
+```
+
+
+```{r}
+#Probabilistic equation of the estimated model
+model_summary <- summary(logistic_model)
+intercept <- coef(model_summary)[1]
+plasma_coef <- coef(model_summary)[2]
+age_coef <- coef(model_summary)[3]
+
+prob_eq <- paste0("Probability(diabetes=1) = 1 / (1 + exp(-(", round(intercept, 4), 
+                  " + ", round(plasma_coef, 4), " * plasma + ", 
+                  round(age_coef, 4), " * age)))")
+cat("Probabilistic Equation:\n", prob_eq, "\n\n")
+```
+```{r}
+# Compute training misclassification error
+misclassification_error <- mean(data_diab$diabetes != data_diab$predicted_class)
+misclassification_error
+```
+
+
+```{r}
+# Scatter plot with predicted values as colors
+plot(data_diab$plasma, data_diab$age, 
+     col = ifelse(data_diab$predicted_class == 1, "red", "blue"), 
+     pch = 16, 
+     main = "Plasma glucose concentration on Age (Predicted Diabetes Classes)",
+     xlab = "Plasma glucose concentration", 
+     ylab = "Age")
+legend("topright", legend = c("No Diabetes (0)", "Diabetes (1)"), 
+       col = c("blue", "red"), pch = 16)
+```
+
+
+The scatter plot shows that the logistic regression model achieves reasonable separation between the two classes. The majority of points with higher plasma glucose concentration (above ~150) are correctly classified as diabetes, while most points with lower plasma levels are classified as no diabetes. 
+
+There is noticeable overlap in regions with intermediate plasma glucose concentrations (~100 to ~150), leading to some misclassifications. Additionally, the spread of age across classifications does not seem to provide significant separation, indicating age may have a weaker impact compared to plasma glucose concentration.
+
+The misclassification rate of 0.26 suggests the model captures the general trends in the data but struggles with borderline cases, particularly in regions where the two classes overlap. While this rate indicates a moderate level of classification accuracy, incorporating additional features or exploring non-linear models might improve performance further.
+
+```{r}
+# Decision boundary equation: plasma as a function of age
+# 0 = intercept + plasma_coef * plasma + age_coef * age
+# plasma = -(intercept + age_coef * age) / plasma_coef
+decision_boundary <- function(age) {
+  -(intercept + age_coef * age) / plasma_coef
+}
+
+# Output decision boundary equation
+cat("Decision Boundary Equation:\n")
+cat("Plasma =", round(-intercept / plasma_coef, 4), "+", 
+    round(-age_coef / plasma_coef, 4), "* Age\n\n")
+
+```
+
+```{r}
+# Scatter plot with predicted values as colors
+plot(data_diab$plasma, data_diab$age, 
+     col = ifelse(data_diab$predicted_class == 1, "red", "blue"), 
+     pch = 16, 
+     main = "Plasma glucose concentration on Age (Predicted Diabetes Classes)",
+     xlab = "Plasma glucose concentration", 
+     ylab = "Age")
+legend("topright", legend = c("No Diabetes (0)", "Diabetes (1)"), 
+       col = c("blue", "red"), pch = 16)
+# Add decision boundary
+age_range <- seq(min(data_diab$age), max(data_diab$age), length.out = 100)
+lines(decision_boundary(age_range), age_range, col = "black", lwd = 2, lty = 2)
+```
+
+The decision boundary derived from the logistic regression model effectively separates the two classes in the provided dataset. As shown in the scatter plot, the majority of data points on each side of the boundary correspond to the correct class. There is minimal overlap, particularly in regions with intermediate plasma glucose levels, which indicates that the linear decision boundary is well-suited for this dataset.
+
+While the model captures the general trend of the data, slight misclassifications may still occur for borderline cases. Overall, the linear model provides a good fit for this classification task.
+
+### 4. 
+
+```{r}
+# r=0.2
+predicted_prob_02 <- predict(logistic_model, type = "response")
+
+
+predicted_class_02 <- ifelse(predicted_prob_02 >= 0.2, 1, 0)
+
+data_diab$predicted_prob_02 <- predicted_prob_02
+data_diab$predicted_class_02 <- predicted_class_02
+
+head(data_diab[, c("plasma", "age", "diabetes", "predicted_prob_02", "predicted_class_02")])
+
+plot(data_diab$plasma, data_diab$age, 
+     col = ifelse(data_diab$predicted_class_02 == 1, "red", "blue"), 
+     pch = 16, 
+     main = "Plasma glucose concentration on Age with Decision Boundary",
+     xlab = "Plasma glucose concentration", 
+     ylab = "Age")
+legend("topright", legend = c("No Diabetes (0)", "Diabetes (1)"), 
+       col = c("blue", "red"), pch = 16)
+
+```
+
+
+```{r}
+# r=0.8
+predicted_prob_08 <- predict(logistic_model, type = "response")
+
+# Classify based on threshold r = 0.8
+predicted_class_08 <- ifelse(predicted_prob_08 >= 0.8, 1, 0)
+
+# Add predictions to the data for inspection
+data_diab$predicted_prob_08 <- predicted_prob_08
+data_diab$predicted_class_08 <- predicted_class_08
+
+# Print the first few rows of the predictions
+head(data_diab[, c("plasma", "age", "diabetes", "predicted_prob_08", "predicted_class_08")])
+
+# Scatter plot with predicted classes
+plot(data_diab$plasma, data_diab$age, 
+     col = ifelse(data_diab$predicted_class_08 == 1, "red", "blue"), 
+     pch = 16, 
+     main = "Plasma glucose concentration on Age with Decision Boundary",
+     xlab = "Plasma glucose concentration", 
+     ylab = "Age")
+legend("topright", legend = c("No Diabetes (0)", "Diabetes (1)"), 
+       col = c("blue", "red"), pch = 16)
+```
+
+With a threshold of r=0.2, the model predicts more cases as diabetes because the threshold for classification is lower. This increases the number of false positives, blue points incorrectly classified as redThe model becomes more sensitive, capturing more potential diabetes cases but at the expense of increased misclassification of non-diabetic individuals.Lowering the threshold reduces specificity but increases sensitivity.
+
+With a threshold of r=0.8, the model predicts fewer cases as diabetes because the threshold for classification is higher. This results in fewer false positives but increases the likelihood of false negatives (red points incorrectly classified as blue).The model becomes more specific, capturing fewer diabetes cases but at the expense of potentially missing some true positives (diabetes cases). Raising the threshold increases specificity but reduces sensitivity.
+
+### 5. Function expansion
+
+```{r}
+# Create new features based on basis expansion
+data_diab$z1 <- data_diab$plasma^4
+data_diab$z2 <- data_diab$plasma^3 * data_diab$age
+data_diab$z3 <- data_diab$plasma^2 * data_diab$age^2
+data_diab$z4 <- data_diab$plasma * data_diab$age^3
+data_diab$z5 <- data_diab$age^4
+```
+
+```{r}
+# Train logistic regression model with expanded features
+expanded_model <- glm(diabetes ~ plasma + age + z1 + z2 + z3 + z4 + z5, data = data_diab, family = binomial)
+
+```
+
+
+```{r}
+# Predict probabilities and classify
+data_diab$expanded_predicted_prob <- predict(expanded_model, type = "response")
+data_diab$expanded_predicted_class <- ifelse(data_diab$expanded_predicted_prob >= 0.5, 1, 0)
+
+# Compute training misclassification error
+expanded_misclassification_error <- mean(data_diab$diabetes != data_diab$expanded_predicted_class)
+expanded_misclassification_error
+
+```
+
+```{r}
+plot(data_diab$plasma, data_diab$age, 
+     col = ifelse(data_diab$expanded_predicted_class == 1, "red", "blue"), 
+     pch = 16, 
+     main = "Plasma glucose concentration on Age (Expanded Model Classes)",
+     xlab = "Plasma glucose concentration", 
+     ylab = "Age")
+legend("topright", legend = c("No Diabetes (0)", "Diabetes (1)"), 
+       col = c("blue", "red"), pch = 16)
+
+```
+
+The expanded model incorporates polynomial features (z1 to z5) to capture  non-linear relationships between plasma glucose concentration, age, and diabetes status.  
+This basis expansion alters the decision boundary, making it more flexible compared to the  original linear logistic regression model.   
+From the plot, the decision boundary bends slightly, particularly in areas where the data  exhibits non-linear separation patterns. However, the changes in the decision boundary are  minimal and do not significantly alter the classification results in this case.   
+Compared to the original model, the basis expansion increases the complexity of the model, potentially capturing subtle  patterns in the data. 
+While the decision boundary is no longer linear, the overall separation between classes  remains consistent, suggesting the simpler linear model may suffice for this dataset. 
+The training misclassification error is slightly reduced, indicating improved accuracy  on the training data.  
+The basis expansion improves the model’s flexibility, but the minimal changes in the  decision boundary and classification results suggest that the additional complexity may  not provide significant practical benefits for this dataset.
