@@ -1,19 +1,26 @@
-parkinsons <- read.csv("C:/Users/victo/OneDrive/Bureau/A1_SML/Machine Learning/Labs/Lab1/data/parkinsons.csv")
-print(summary(parkinsons[parkinsons$subject==1,]))
-print(sum(parkinsons$subject == 1))
-      
-#library(caret)
+## Assignment 2. Linear regression and ridge regression
+
+### 1. diabetes preparation
+
+```{r}
+parkinsons <- read.csv("parkinsons.csv")
+```
+
+
+We split the diabetes into a training and a test set (60/40) 
+```{r}
+library(caret)
 
 set.seed(123)
-train_index <- createDataPartition(parkinsons$subject, p = 0.6, list = FALSE)
+train_index <- creatediabetesPartition(parkinsons$subject, p = 0.6, list = FALSE)
 
 train_set <- parkinsons[train_index, ]
 test_set <- parkinsons[-train_index, ]
+```
 
-nrow(train_set)
-nrow(test_set)
+The target variable is `motor_UPDRS`, and the column `subject.` is excluded from the predictors but retained for grouping purposes.
 
-
+```{r}
 # Exclude non-predictor columns
 predictor_columns <- setdiff(names(train_set), c("motor_UPDRS", "subject."))
 
@@ -21,7 +28,7 @@ predictor_columns <- setdiff(names(train_set), c("motor_UPDRS", "subject."))
 scaled_train <- train_set
 scaled_train[predictor_columns] <- scale(train_set[predictor_columns])
 
-# Save scaling parameters (mean and sd) from training set
+# Save scaling parameters from training set
 scaling_params <- attributes(scale(train_set[predictor_columns]))
 
 # Scale the predictors in the test set using training set parameters
@@ -34,169 +41,164 @@ scaled_test[predictor_columns] <- scale(
 
 scaled_train <- scaled_train[, c(predictor_columns, "motor_UPDRS", "subject.")]
 scaled_test <- scaled_test[, c(predictor_columns, "motor_UPDRS", "subject.")]
-
-# Check results
-summary(scaled_train)
-summary(scaled_test)
+```
 
 
+### 2. Linear Regression Model
 
-# Fit a linear regression model using training data
-linear_model <- lm(motor_UPDRS ~ ., data = scaled_train)
 
-# Display summary of the model to check variable significance
+```{r}
+#Regression model on the training diabetes and removing subject from the model
+linear_model <- lm(motor_UPDRS ~ . - subject., diabetes = scaled_train)
+
+
+# Training and test MSE
+train_predictions_train <- predict(linear_model, scaled_train)
+train_mse <- mean((scaled_train$motor_UPDRS - train_predictions_train)^2)
+
+test_predictions_test <- predict(linear_model, scaled_test)
+test_mse <- mean((scaled_test$motor_UPDRS - test_predictions_test)^2)
+
+train_mse
+test_mse
+
+```
+
+
+
+The MSE for the train and test set are close in value, that means the model adapts well to other sets than the training
+
+```{r}
 summary(linear_model)
+```
 
-#Variables that contribute significantly, 
-#the ones with a p-value<0.05 (subject doesnt count) : age,sex,total_UPDRS, jitter, 
-#jitter.Abs(keep only one of the two),Shimmer.APQ5,RPDE,PPE
+The variables that contribute significantly are the ones with a p-value <0.05 : age,sex,total_UPDRS, jitter, jitter.Abs,Shimmer.APQ5,Shimmer.APQ11,RPDE,PPE.
 
+### 4. Implementing functions
 
-# Calculate training MSE
-train_predictions <- predict(linear_model, scaled_train)
-train_mse <- mean((scaled_train$motor_UPDRS - train_predictions)^2)
-cat("Training MSE:", train_mse, "\n")
+```{r}
+# Log-likelihood function
+logLikelihood <- function(theta, sigma, X, T) {
+  n <- length(T) # Number of observations
+  residuals <- T - X %*% theta # Calculate residuals
+  - (n / 2) * log(2 * pi) - n * log(sigma) - (1 / (2 * sigma^2)) * sum(residuals^2)
+}
+```
 
-# Calculate test MSE
-test_predictions <- predict(linear_model, scaled_test)
-test_mse <- mean((scaled_test$motor_UPDRS - test_predictions)^2)
-cat("Test MSE:", test_mse, "\n")
-
-#The MSE for test and train are close in values, wich indicate that the model fits well for the prediction with the test set
-
-log_likelihood <- function(theta, sigma, X, y) {
-  n <- length(y)
-  y_pred <- X %*% theta
-  ll <- -n / 2 * log(2 * pi) - n / 2 * log(sigma^2) - sum((y - y_pred)^2) / (2 * sigma^2)
-  return(ll)
+```{r}
+#Ridge function
+ridge <- function(theta, sigma, X, T, lambda) {
+  logLikelihood <- logLikelihood(theta, sigma, X, T)
+  ridge_penalty <- lambda * sum(theta[-1]^2)
+  return(-logLikelihood + ridge_penalty)
 }
 
-# Utilisation avec les coefficients du modèle ajusté
-theta <- coef(linear_model)
-X <- as.matrix(cbind(1, scaled_train[, predictor_columns]))
-y <- scaled_train$motor_UPDRS
+```
 
-# Recalculer sigma à partir des résidus
-residuals <- y - X %*% theta
-sigma <- sd(residuals)
-cat("Estimated sigma:", sigma, "\n")
-
-# Calculer la log-vraisemblance
-ll <- log_likelihood(theta, sigma, X, y)
-cat("Log-likelihood:", ll, "\n")
-
-
-##Ridge
-
-ridge_log_likelihood <- function(theta, sigma, X, y, lambda) {
-  # theta: Vector of coefficients
-  # sigma: Dispersion (standard deviation of residuals)
-  # X: Matrix of predictors
-  # y: Vector of target values
-  # lambda: Ridge penalty parameter
-  
-  # Compute the negative log-likelihood
-  n <- length(y)
-  y_pred <- X %*% theta
-  neg_log_likelihood <- n / 2 * log(2 * pi) + n / 2 * log(sigma^2) + sum((y - y_pred)^2) / (2 * sigma^2)
-  
-  # Add Ridge penalty term (lambda * ||theta||^2)
-  ridge_penalty <- lambda * sum(theta[-1]^2) # Exclude the intercept (if present) from penalty
-  
-  # Return penalized negative log-likelihood
-  return(neg_log_likelihood + ridge_penalty)
-}
-
-# Define lambda (penalty parameter)
-lambda <- 1  # Example value
-
-# Compute Ridge penalized log-likelihood
-ridge_ll <- ridge_log_likelihood(theta, sigma, X, y, lambda)
-cat("Ridge Penalized Negative Log-Likelihood:", ridge_ll, "\n")
-
-ridge_opt <- function(lambda, X, y) {
-  # lambda: Ridge penalty parameter
-  # X: Predictor matrix (scaled, with intercept if needed)
-  # y: Target vector
-  
-  # Objective function: Penalized negative log-likelihood
+```{r}
+#RidgeOpt function
+ridgeOpt <- function(lambda, X, T, initial_theta, initial_sigma) {
+  # Define the objective function to minimize
   objective_function <- function(params) {
-    # Extract theta and sigma from params
-    p <- ncol(X)
-    theta <- params[1:p]       # First p elements are theta
-    sigma <- params[p + 1]     # Last element is sigma
+    theta <- params[-length(params)] # Extract theta
+    log_sigma <- params[length(params)] # Optimize log(sigma)
+    sigma <- exp(log_sigma) 
     
-    # Penalized negative log-likelihood
-    if (sigma <= 0) return(Inf)  # Ensure sigma is positive
-    ridge_ll <- ridge_log_likelihood(theta, sigma, X, y, lambda)
-    return(ridge_ll)
+    ridge(theta, sigma, X, T, lambda)
   }
   
-  # Initialize parameters (theta as 0, sigma as 1)
-  init_params <- c(rep(0, ncol(X)), 1)  # Initialize theta and sigma
+  # Combine initial guesses for theta and log(sigma) into a single vector
+  initial_log_sigma <- log(initial_sigma)
+  initial_params <- c(initial_theta, initial_log_sigma)
   
-  # Optimize using BFGS
-  result <- optim(
-    par = init_params,
+  # Minimize the objective function
+  opt <- optim(
+    par = initial_params,
     fn = objective_function,
     method = "BFGS",
-    control = list(maxit = 1000)  # Increase max iterations if needed
+    control = list(fnscale = 1) # Default direction for minimization
   )
   
-  # Extract optimized values
-  optimized_theta <- result$par[1:ncol(X)]
-  optimized_sigma <- result$par[ncol(X) + 1]
+  # Extract optimized theta and sigma
+  optimized_theta <- opt$par[-length(opt$par)] 
+  optimized_sigma <- exp(opt$par[length(opt$par)]) 
   
-  return(list(theta = optimized_theta, sigma = optimized_sigma, value = result$value, convergence = result$convergence))
+  
+  return(list(
+    optimized_theta = optimized_theta,
+    optimized_sigma = optimized_sigma,
+    value = opt$value, # Final objective value
+    convergence = opt$convergence # Convergence status
+  ))
 }
+```
 
-# Prepare the data
-X <- as.matrix(cbind(1, scaled_train[, predictor_columns]))  # Add intercept
-y <- scaled_train$motor_UPDRS
-
-# Set a lambda value
-lambda <- 1
-
-
-# Run RidgeOpt
-ridge_result <- ridge_opt(lambda, X, y)
-
-# Print results
-cat("Optimized coefficients (theta):\n", ridge_result$theta, "\n")
-cat("Optimized sigma:", ridge_result$sigma, "\n")
-cat("Objective function value:", ridge_result$value, "\n")
-cat("Convergence status (0=success):", ridge_result$convergence, "\n")
-
-ridge_df <- function(lambda, X) {
-  # lambda: Ridge penalty parameter
-  # X: Predictor matrix (scaled, with intercept if needed)
+```{r}
+#DF function
+#Compute degrees of freedom for Ridge regression
+df <- function(lambda, X) {
+  # Compute the Ridge hat matrix
+  n <- ncol(X) # Number of predictors
+  I <- diag(n) # Identity matrix of size n x n
+  H <- X %*% solve(t(X) %*% X + lambda * I) %*% t(X) # Hat matrix
   
-  # Identity matrix of the size of the number of predictors
-  I <- diag(ncol(X))
-  
-  # Compute the hat matrix for Ridge regression
-  H <- X %*% solve(t(X) %*% X + lambda * I) %*% t(X)
-  
-  # Compute the degrees of freedom as the trace of the hat matrix
-  df <- sum(diag(H))
-  
-  return(df)
+  # Return the trace of the hat matrix
+  return(sum(diag(H)))
 }
-
-# Prepare the data
-X <- as.matrix(cbind(1, scaled_train[, predictor_columns]))  # Add intercept if needed
-
-# Test for a specific lambda
-lambda <- 10
-df <- ridge_df(lambda, X)
-cat("Degrees of Freedom for lambda =", lambda, ":", df, "\n")
-
-# Explore a range of lambda values
-lambdas <- seq(0.1, 100, length.out = 10)
-df_values <- sapply(lambdas, function(l) ridge_df(l, X))
-
-# Plot DF vs Lambda
-plot(lambdas, df_values, type = "b", main = "Degrees of Freedom vs Lambda",
-     xlab = "Lambda", ylab = "Degrees of Freedom")
+```
 
 
+### 4. Computing optimal theta for different lambdas
+
+```{r}
+# Define required variables
+lambdas <- c(1, 100, 1000) # Regularization parameters
+T <- scaled_train$motor_UPDRS # Target variable
+X <- as.matrix(cbind(1, scaled_train[, predictor_columns])) # Design matrix with intercept
+initial_theta <- rep(0, ncol(X)) # Initialize theta as zeros
+initial_sigma <- 1 # Initial guess for sigma
+
+
+# Placeholder for results
+results <- lapply(lambdas, function(lambda) {
+  # Optimize parameters for the current lambda
+  opt_result <- ridgeOpt(lambda, X, T, initial_theta, initial_sigma)
+  
+  # Extract optimized parameters
+  optimized_theta <- opt_result$optimized_theta
+  optimized_sigma <- opt_result$optimized_sigma
+  
+  # Compute predictions
+  train_predictions <- X %*% optimized_theta
+  test_X <- as.matrix(cbind(1, scaled_test[, predictor_columns])) # Test matrix with intercept
+  test_predictions <- test_X %*% optimized_theta
+  
+  # Compute MSE for training and test sets
+  train_mse <- mean((T - train_predictions)^2)
+  test_mse <- mean((scaled_test$motor_UPDRS - test_predictions)^2)
+  
+  # Compute degrees of freedom
+  degrees_of_freedom <- df(lambda, X)
+  
+  # Return results
+  list(
+    lambda = lambda,
+    optimized_theta = optimized_theta,
+    optimized_sigma = optimized_sigma,
+    train_mse = train_mse,
+    test_mse = test_mse,
+    degrees_of_freedom = degrees_of_freedom
+  )
+})
+
+# Results
+for (res in results) {
+  cat("\nLambda:", res$lambda, "\n")
+  cat("Optimized Sigma:", res$optimized_sigma, "\n")
+  cat("Training MSE:", res$train_mse, "\n")
+  cat("Test MSE:", res$test_mse, "\n")
+  cat("Degrees of Freedom:", res$degrees_of_freedom, "\n")
+}
+```
+
+#Lambda is the regularization parameter that controls the impact of the ridge penalty. Lambda = 1 is the most appropriate for the ridge regression model because it has the lowest MSE, 6.32 vs 27.80 and 61.78. That means generalization performance to new diabetes is better. The degrees of freedom are the balance between complexity and regularization. A model with low DF may be too simple to explain the target variable with all variables used in the model. High DF may be too complex to fit other diabetes sets than the one used for training. The DF for lambda = 1 are 18.8, so relatively close to the DF of lambda = 100 (14.7). With the MSE and the DF for each lambda we can say that lambda = 1 is the most appropriate in our case.

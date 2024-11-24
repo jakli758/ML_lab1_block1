@@ -267,213 +267,19 @@ In the case of multinominal distributions the cross entropy might be the better 
 
 ## Assignment 2. Linear regression and ridge regression
 
-
-
-## Assignment 3. Logistic regression and basis function
-expansion
-
-
-
-
-# Apendix
-```{r eval=FALSE}
-#setwd()
-
-#### 1 ####
-
-data <- read.csv("optdigits.csv", header = FALSE)
-
-n <- dim(data)[1]
-set.seed(12345)
-id <- sample(1:n, floor(n*0.5))
-train <- data[id,]
-id1 <- setdiff(1:n, id)
-set.seed(12345)
-id2 <- sample(id1, floor(n*0.25))
-valid <- data[id2,]
-id3 <- setdiff(id1,id2)
-test <- data[id3,]
-
-train
-#### 2 ####
-library(kknn)
-# model that is trained on train dataset and predicts on train dataset
-model_train <- kknn(as.factor(V65)~., train = train, test = train, k=30, kernel="rectangular")
-train_predictions <- fitted(model_train)
-
-# model that is trained on train dataset and predicts on train dataset
-model_test <- kknn(as.factor(V65)~., train = train, test = test, k=30, kernel="rectangular")
-test_predictions <- fitted(model_test)
-
-# confusion matrices
-conf_matrix_train <- table(predicted_values=train_predictions, true_values=train$V65)
-cat("Train data predictions: \n")
-conf_matrix_train
-
-conf_matrix_test <- table(predicted_values=test_predictions, true_values=test$V65)
-cat("Test data predictions: \n")
-conf_matrix_test
-
-
-# missclassification error
-missclassification_error <- function(confusion_matrix){
-  return(1-sum(diag(confusion_matrix)) / sum(confusion_matrix))
-}
-missclassification_error_train <- missclassification_error(conf_matrix_train)
-missclassification_error_test <- missclassification_error(conf_matrix_test)
-
-cat("Missclassification Error on train data:", missclassification_error_train, "\n")
-cat("Missclassification Error on test data:", missclassification_error_test, "\n")
-
-
-
-#### 3 ####
-display_img <- function(df, index){
-  # helper function to rotate the images
-  rotate <- function(x) t(apply(x, 2, rev)) # https://stackoverflow.com/questions/16496210/rotate-a-matrix-in-r-by-90-degrees-clockwise
-  img <- rotate(rotate(rotate(matrix(unlist(df[index,1:64]), nrow=8,ncol=8)))) # use unlist to avoid "'x' must be numeric matrix error"
-  heatmap(img, Colv = NA, Rowv = NA)
-}
-
-display_img(train, 1511)
-
-# add column with probability for correct class to df
-correct_class_probs <- sapply(1:nrow(train), function(i) {
-  model_train$prob[i, as.character(train$V65[i])]
-})
-train$correct_prob <- correct_class_probs
-
-# add column with predicted class 
-train$predicted_value <- fitted(model_train)
-
-# get indices for class 8 in train set
-i_eight <- which(train$V65 == 8)
-
-# create df with only eights and sort df to get the images with highest/lowest probs
-train_eight <- train[i_eight,]
-train_eight_ordered <- train_eight[order(train_eight$correct_prob),]
-
-# visualize two easiest to classify
-tail(train_eight_ordered,2)
-display_img(data, 981)
-display_img(data, 3447)
-
-# visualize three hardest to classify
-head(train_eight_ordered,3)
-display_img(data, 1793)
-display_img(data, 869)
-display_img(data, 3591)
-
-
-
-#### 4 ####
-
-k_values <- 1:30
-train_errors <- numeric(length=length(k_values))
-val_errors <- numeric(length=length(k_values))
-
-for (K in k_values){
-  train_model <- kknn(as.factor(V65)~., train = train, test = train, k=K, kernel="rectangular")
-  
-  train_predictions <- fitted(train_model)
-  train_conf_matrix <- table(predicted_values=train_predictions, true_values=train$V65)
-  train_error <- missclassification_error(train_conf_matrix)
-  train_errors[K] <- train_error
-  
-  val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
-  
-  val_predictions <- fitted(val_model)
-  val_conf_matrix <- table(predicted_values=val_predictions, true_values=valid$V65)
-  val_error <- missclassification_error(val_conf_matrix)
-  val_errors[K] <- val_error
-}
-train_errors
-train_conf_matrix
-val_errors
-df_errors <- data.frame(K = k_values, train_error = train_errors, val_error=val_errors)
-
-library(ggplot2)
-ggplot(df_errors, aes(x = K)) +
-  geom_line(aes(y = train_error, color = "Training Error")) +
-  geom_line(aes(y = val_error, color = "Validation Error")) +
-  labs(
-    title = "Training and Validation Errors vs K",
-    x = "Number of Neighbors (K)",
-    y = "Misclassification Error"
-  ) +
-  scale_color_manual(
-    name = "Error Type",
-    values = c("Training Error" = "blue", "Validation Error" = "red")
-  )
-
-
-best_model <- kknn(as.factor(V65)~., train = train, test = test, k=3, kernel="rectangular")
-best_predictions <- fitted(best_model)
-best_conf_matrix <- table(predicted_values=best_predictions, true_values=test$V65)
-best_error <- missclassification_error(best_conf_matrix)
-best_error
-
-#### 5 ####
-
-cross_entropy_error <- function(y_true, pred_probs){
-  n <- length(y_true)
-  true_prob <- sapply(1:n, function(i) pred_probs[i, y_true[i] + 1])
-  error <- -sum(log(true_prob + 1e-15)) / n
-  return(error)
-}
-
-
-k_values <- 1:30
-train_errors <- numeric(length=length(k_values))
-val_errors <- numeric(length=length(k_values))
-
-for (K in k_values){
-  train_model <- kknn(as.factor(V65)~., train = train, test = train, k=K, kernel="rectangular")
-
-  train_probs <- train_model$prob
-  train_error <- cross_entropy_error(train$V65, train_probs)
-  train_errors[K] <- train_error
-  
-  val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
-  
-  val_probs <- val_model$prob
-  val_error <- cross_entropy_error(valid$V65, val_probs)
-  
-  val_errors[K] <- val_error
-}
-val_errors
-df_errors <- data.frame(K = k_values, train_error = train_errors, val_error=val_errors)
-
-ggplot(df_errors, aes(x = K)) +
-  geom_line(aes(y = train_error, color = "Training Error")) +
-  geom_line(aes(y = val_error, color = "Validation Error")) +
-  labs(
-    title = "Training and Validation Errors vs K",
-    x = "Number of Neighbors (K)",
-    y = "Cross Validation Error"
-  ) +
-  scale_color_manual(
-    name = "Error Type",
-    values = c("Training Error" = "blue", "Validation Error" = "red")
-  )
-
-```
-
-## Assignment 2. Linear regression and ridge regression
-
-### 1. diabetes preparation
+### 1. Data preparation
 
 ```{r}
 parkinsons <- read.csv("parkinsons.csv")
 ```
 
 
-We split the diabetes into a training and a test set (60/40) 
+We split the data into a training and a test set (60/40) 
 ```{r}
 library(caret)
 
 set.seed(123)
-train_index <- creatediabetesPartition(parkinsons$subject, p = 0.6, list = FALSE)
+train_index <- createDataPartition(parkinsons$subject, p = 0.6, list = FALSE)
 
 train_set <- parkinsons[train_index, ]
 test_set <- parkinsons[-train_index, ]
@@ -510,7 +316,7 @@ scaled_test <- scaled_test[, c(predictor_columns, "motor_UPDRS", "subject.")]
 
 ```{r}
 #Regression model on the training diabetes and removing subject from the model
-linear_model <- lm(motor_UPDRS ~ . - subject., diabetes = scaled_train)
+linear_model <- lm(motor_UPDRS ~ . - subject., data = scaled_train)
 
 
 # Training and test MSE
@@ -667,7 +473,7 @@ Lambda is the regularization parameter that controls the impact of the ridge pen
 
 ## Assignment 3. Logistic regression and basis function expansion
 
-### diabetes preparation
+### Data preparation
 
 ```{r}
 data_diab <- read.csv("pima-indians-diabetes.csv")
@@ -697,7 +503,7 @@ legend("topright",
 
 ```
 
-It is not easy to classify diabetes using only plasma glucose concentration and age.
+It is not easy to classify diabetes levels using only plasma glucose concentration and age.
 While the scatter plot shows some general trends, such as higher plasma glucose concentrations being associated with diabetes, the overlap between the two classes across the age and plasma glucose dimensions suggests that a simple logistic regression model might struggle to achieve high accuracy.
 This is because the decision boundary between the two groups would not clearly separate the classes, leading to significant misclassification errors. Additional features or transformations are needed to improve classification performance.
 
@@ -901,3 +707,192 @@ Compared to the original model, the basis expansion increases the complexity of 
 While the decision boundary is no longer linear, the overall separation between classes  remains consistent, suggesting the simpler linear model may suffice for this dataset. 
 The training misclassification error is slightly reduced, indicating improved accuracy  on the training data.  
 The basis expansion improves the model’s flexibility, but the minimal changes in the  decision boundary and classification results suggest that the additional complexity may  not provide significant practical benefits for this dataset.
+
+
+
+
+
+# Apendix
+```{r eval=FALSE}
+#setwd()
+
+#### 1 ####
+
+data <- read.csv("optdigits.csv", header = FALSE)
+
+n <- dim(data)[1]
+set.seed(12345)
+id <- sample(1:n, floor(n*0.5))
+train <- data[id,]
+id1 <- setdiff(1:n, id)
+set.seed(12345)
+id2 <- sample(id1, floor(n*0.25))
+valid <- data[id2,]
+id3 <- setdiff(id1,id2)
+test <- data[id3,]
+
+train
+#### 2 ####
+library(kknn)
+# model that is trained on train dataset and predicts on train dataset
+model_train <- kknn(as.factor(V65)~., train = train, test = train, k=30, kernel="rectangular")
+train_predictions <- fitted(model_train)
+
+# model that is trained on train dataset and predicts on train dataset
+model_test <- kknn(as.factor(V65)~., train = train, test = test, k=30, kernel="rectangular")
+test_predictions <- fitted(model_test)
+
+# confusion matrices
+conf_matrix_train <- table(predicted_values=train_predictions, true_values=train$V65)
+cat("Train data predictions: \n")
+conf_matrix_train
+
+conf_matrix_test <- table(predicted_values=test_predictions, true_values=test$V65)
+cat("Test data predictions: \n")
+conf_matrix_test
+
+
+# missclassification error
+missclassification_error <- function(confusion_matrix){
+  return(1-sum(diag(confusion_matrix)) / sum(confusion_matrix))
+}
+missclassification_error_train <- missclassification_error(conf_matrix_train)
+missclassification_error_test <- missclassification_error(conf_matrix_test)
+
+cat("Missclassification Error on train data:", missclassification_error_train, "\n")
+cat("Missclassification Error on test data:", missclassification_error_test, "\n")
+
+
+
+#### 3 ####
+display_img <- function(df, index){
+  # helper function to rotate the images
+  rotate <- function(x) t(apply(x, 2, rev)) # https://stackoverflow.com/questions/16496210/rotate-a-matrix-in-r-by-90-degrees-clockwise
+  img <- rotate(rotate(rotate(matrix(unlist(df[index,1:64]), nrow=8,ncol=8)))) # use unlist to avoid "'x' must be numeric matrix error"
+  heatmap(img, Colv = NA, Rowv = NA)
+}
+
+display_img(train, 1511)
+
+# add column with probability for correct class to df
+correct_class_probs <- sapply(1:nrow(train), function(i) {
+  model_train$prob[i, as.character(train$V65[i])]
+})
+train$correct_prob <- correct_class_probs
+
+# add column with predicted class 
+train$predicted_value <- fitted(model_train)
+
+# get indices for class 8 in train set
+i_eight <- which(train$V65 == 8)
+
+# create df with only eights and sort df to get the images with highest/lowest probs
+train_eight <- train[i_eight,]
+train_eight_ordered <- train_eight[order(train_eight$correct_prob),]
+
+# visualize two easiest to classify
+tail(train_eight_ordered,2)
+display_img(data, 981)
+display_img(data, 3447)
+
+# visualize three hardest to classify
+head(train_eight_ordered,3)
+display_img(data, 1793)
+display_img(data, 869)
+display_img(data, 3591)
+
+
+
+#### 4 ####
+
+k_values <- 1:30
+train_errors <- numeric(length=length(k_values))
+val_errors <- numeric(length=length(k_values))
+
+for (K in k_values){
+  train_model <- kknn(as.factor(V65)~., train = train, test = train, k=K, kernel="rectangular")
+  
+  train_predictions <- fitted(train_model)
+  train_conf_matrix <- table(predicted_values=train_predictions, true_values=train$V65)
+  train_error <- missclassification_error(train_conf_matrix)
+  train_errors[K] <- train_error
+  
+  val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
+  
+  val_predictions <- fitted(val_model)
+  val_conf_matrix <- table(predicted_values=val_predictions, true_values=valid$V65)
+  val_error <- missclassification_error(val_conf_matrix)
+  val_errors[K] <- val_error
+}
+train_errors
+train_conf_matrix
+val_errors
+df_errors <- data.frame(K = k_values, train_error = train_errors, val_error=val_errors)
+
+library(ggplot2)
+ggplot(df_errors, aes(x = K)) +
+  geom_line(aes(y = train_error, color = "Training Error")) +
+  geom_line(aes(y = val_error, color = "Validation Error")) +
+  labs(
+    title = "Training and Validation Errors vs K",
+    x = "Number of Neighbors (K)",
+    y = "Misclassification Error"
+  ) +
+  scale_color_manual(
+    name = "Error Type",
+    values = c("Training Error" = "blue", "Validation Error" = "red")
+  )
+
+
+best_model <- kknn(as.factor(V65)~., train = train, test = test, k=3, kernel="rectangular")
+best_predictions <- fitted(best_model)
+best_conf_matrix <- table(predicted_values=best_predictions, true_values=test$V65)
+best_error <- missclassification_error(best_conf_matrix)
+best_error
+
+#### 5 ####
+
+cross_entropy_error <- function(y_true, pred_probs){
+  n <- length(y_true)
+  true_prob <- sapply(1:n, function(i) pred_probs[i, y_true[i] + 1])
+  error <- -sum(log(true_prob + 1e-15)) / n
+  return(error)
+}
+
+
+k_values <- 1:30
+train_errors <- numeric(length=length(k_values))
+val_errors <- numeric(length=length(k_values))
+
+for (K in k_values){
+  train_model <- kknn(as.factor(V65)~., train = train, test = train, k=K, kernel="rectangular")
+
+  train_probs <- train_model$prob
+  train_error <- cross_entropy_error(train$V65, train_probs)
+  train_errors[K] <- train_error
+  
+  val_model <- kknn(as.factor(V65)~., train = train, test = valid, k=K, kernel="rectangular")
+  
+  val_probs <- val_model$prob
+  val_error <- cross_entropy_error(valid$V65, val_probs)
+  
+  val_errors[K] <- val_error
+}
+val_errors
+df_errors <- data.frame(K = k_values, train_error = train_errors, val_error=val_errors)
+
+ggplot(df_errors, aes(x = K)) +
+  geom_line(aes(y = train_error, color = "Training Error")) +
+  geom_line(aes(y = val_error, color = "Validation Error")) +
+  labs(
+    title = "Training and Validation Errors vs K",
+    x = "Number of Neighbors (K)",
+    y = "Cross Validation Error"
+  ) +
+  scale_color_manual(
+    name = "Error Type",
+    values = c("Training Error" = "blue", "Validation Error" = "red")
+  )
+
+```
+
